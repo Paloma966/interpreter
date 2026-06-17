@@ -1,138 +1,104 @@
 package lexer
 
-import "interpreter/token"
+import (
+	"fmt"
+	"strings"
+)
+
+type Instruction struct {
+	OpCode int // 1-8: number of consecutive 哈
+	Param  int // trailing spaces after 哈 (0 = default 1 for ops 1-4)
+	Indent int // leading spaces before 哈 (indentation level)
+	Line   int // source line number
+}
 
 type Lexer struct {
-	input        string
-	position     int
-	readPosition int
-	ch           byte
+	lines  []string
+	errors []string
 }
 
 func New(input string) *Lexer {
-	l := &Lexer{input: input}
-	l.readChar()
-	return l
+	return &Lexer{lines: strings.Split(input, "\n")}
 }
 
-func (l *Lexer) readChar() {
-	if l.readPosition >= len(l.input) {
-		l.ch = 0
-	} else {
-		l.ch = l.input[l.readPosition]
-	}
-	l.position = l.readPosition
-	l.readPosition += 1
-}
+func (l *Lexer) Lex() []Instruction {
+	var program []Instruction
 
-func (l *Lexer) NextToken() token.Token {
-	var tok token.Token
+	for lineNum, rawLine := range l.lines {
+		// Trim trailing spaces for parsing (but we count leading/trailing separately)
+		line := rawLine
 
-	l.skipWhitespace()
-
-	switch l.ch {
-	case '=':
-		if l.peekChar() == '=' {
-			ch := l.ch
-			l.readChar()
-			tok = token.Token{Type: token.EQ, Literal: string(ch) + string(l.ch)}
-		} else {
-			tok = newToken(token.ASSIGN, l.ch)
+		// Skip empty lines
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
-	case '!':
-		if l.peekChar() == '=' {
-			ch := l.ch
-			l.readChar()
-			tok = token.Token{Type: token.NOT_EQ, Literal: string(ch) + string(l.ch)}
-		} else {
-			tok = newToken(token.BANG, l.ch)
-		}
-	case '-':
-		tok = newToken(token.MINUS, l.ch)
-	case ';':
-		tok = newToken(token.SEMICOLON, l.ch)
-	case '*':
-		tok = newToken(token.ASTERIK, l.ch)
-	case '/':
-		tok = newToken(token.SLASH, l.ch)
-	case '<':
-		tok = newToken(token.LT, l.ch)
-	case '>':
-		tok = newToken(token.GT, l.ch)
-	case '(':
-		tok = newToken(token.LPAREN, l.ch)
-	case ')':
-		tok = newToken(token.RPAREN, l.ch)
-	case ',':
-		tok = newToken(token.COMMA, l.ch)
-	case '+':
-		tok = newToken(token.PLUS, l.ch)
-	case '{':
-		tok = newToken(token.LBRACE, l.ch)
-	case '}':
-		tok = newToken(token.RBRACE, l.ch)
-	case 0:
-		tok.Literal = ""
-		tok.Type = token.EOF
-	default:
-		if isLetter(l.ch) {
-			tok.Literal = l.readIdentifier()
-			tok.Type = token.LookupIdent(tok.Literal)
-			return tok
-		} else if isDigit(l.ch) {
-			tok.Type = token.INT
-			tok.Literal = l.readNumber()
-			return tok
-		} else {
-			tok = newToken(token.ILLEGAL, l.ch)
+
+		inst := l.parseLine(line, lineNum+1)
+		if inst != nil {
+			program = append(program, *inst)
 		}
 	}
 
-	l.readChar()
-	return tok
+	return program
 }
 
-func newToken(tokenType token.TokenType, ch byte) token.Token {
-	return token.Token{Type: tokenType, Literal: string(ch)}
-}
+func (l *Lexer) parseLine(line string, lineNum int) *Instruction {
+	runes := []rune(line)
 
-func (l *Lexer) readIdentifier() string {
-	position := l.position
-	for isLetter(l.ch) {
-		l.readChar()
+	// Phase 1: count leading spaces (indent)
+	indent := 0
+	pos := 0
+	for pos < len(runes) && runes[pos] == ' ' {
+		indent++
+		pos++
 	}
 
-	return l.input[position:l.position]
-}
+	// Phase 2: count consecutive 哈
+	if pos >= len(runes) {
+		return nil // shouldn't happen since we skip empty lines
+	}
 
-func isLetter(ch byte) bool {
-	return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch == '_'
-}
+	haCount := 0
+	for pos < len(runes) && runes[pos] == '哈' {
+		haCount++
+		pos++
+	}
 
-func (l *Lexer) skipWhitespace() {
-	for l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == '\r' {
-		l.readChar()
+	if haCount == 0 {
+		l.addError(lineNum, "没有哈，啥也不是")
+		return nil
+	}
+
+	if haCount > 8 {
+		l.addError(lineNum, fmt.Sprintf("哈太多了(%d个)，最多8个", haCount))
+		return nil
+	}
+
+	// Phase 3: count trailing spaces (param)
+	param := 0
+	for pos < len(runes) && runes[pos] == ' ' {
+		param++
+		pos++
+	}
+
+	// Phase 4: check for illegal characters
+	if pos < len(runes) {
+		l.addError(lineNum, fmt.Sprintf("非法字符: %q", runes[pos]))
+		return nil
+	}
+
+	return &Instruction{
+		OpCode: haCount,
+		Param:  param,
+		Indent: indent,
+		Line:   lineNum,
 	}
 }
 
-func (l *Lexer) readNumber() string {
-	position := l.position
-
-	for isDigit(l.ch) {
-		l.readChar()
-	}
-
-	return l.input[position:l.position]
+func (l *Lexer) addError(line int, msg string) {
+	l.errors = append(l.errors, fmt.Sprintf("行%d: %s", line, msg))
 }
 
-func isDigit(ch byte) bool {
-	return ch >= '0' && ch <= '9'
-}
-
-func (l *Lexer) peekChar() byte {
-	if l.readPosition >= len(l.input) {
-		return 0
-	} else {
-		return l.input[l.readPosition]
-	}
+func (l *Lexer) Errors() []string {
+	return l.errors
 }

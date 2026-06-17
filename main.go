@@ -4,16 +4,12 @@ import (
 	"fmt"
 	"interpreter/repl"
 	"os"
-	"os/user"
 )
 
 func main() {
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("hello %s, This is the Ha Programming Language!\n", user.Username)
-	fmt.Printf("Feel free to type in the program / command\n")
+	fmt.Println("哈语言 — 只有哈和空格")
+	fmt.Println("1-8个哈 = 操作，空格 = 参数")
+	fmt.Println("空行 = 执行程序")
+	fmt.Println()
 	repl.Start(os.Stdin, os.Stdout)
 }
